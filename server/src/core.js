@@ -404,7 +404,7 @@ export async function createDeposit(
   -------------------------------------------------- */
 
   const paymentCode =
-    `NAP_${
+    `NAP${
       crypto
         .randomBytes(5)
         .toString('hex')
@@ -627,7 +627,7 @@ export async function processSePayPayload(
 
     const match =
       content.match(
-        /(NAP_[A-Z0-9-]{6,})/i
+        /(NAP[A-Z0-9-]{6,})/i
       );
 
 
