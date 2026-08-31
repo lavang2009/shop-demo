@@ -1,0 +1,28 @@
+{
+  "users": {
+    "demo-user": {
+      "userId": "demo-user",
+      "name": "Demo User",
+      "balance": 0
+    }
+  },
+  "deposits": {
+    "4d32111f-458d-443a-9921-e40903e12219": {
+      "id": "4d32111f-458d-443a-9921-e40903e12219",
+      "userId": "demo-user",
+      "amount": 100000,
+      "paymentCode": "NAP_9D4EEB2593",
+      "status": "pending",
+      "createdAt": "2026-08-31T02:16:22.014Z"
+    },
+    "8e801b4d-1e98-4194-9381-7ed57760906b": {
+      "id": "8e801b4d-1e98-4194-9381-7ed57760906b",
+      "userId": "demo-user",
+      "amount": 100000,
+      "paymentCode": "NAP_A5D2011FF9",
+      "status": "pending",
+      "createdAt": "2026-08-31T02:17:42.124Z"
+    }
+  },
+  "processedTransactions": {}
+}
