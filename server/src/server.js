@@ -167,4 +167,6 @@ app.post('/api/test/sepay', async (req, res) => {
 app.get('/api/health', (req, res) => res.json({ ok: true, storage: firestore ? 'firestore' : 'local-json', sepaySecretConfigured: Boolean(process.env.SEPAY_WEBHOOK_SECRET) }));
 app.use((req, res) => res.sendFile(path.join(ROOT, 'public', 'index.html')));
 const port = Number(process.env.PORT || 3000);
-app.listen(port, () => console.log(`Server running at http://localhost:${port}`));
+if (process.env.VERCEL !== '1') {
+  app.listen(port, () => console.log(`Server running at http://localhost:${port}`));
+}
