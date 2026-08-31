@@ -46,7 +46,6 @@ function initFirestore() {
   const privateKey =
     process.env.FIREBASE_PRIVATE_KEY?.trim();
 
-  // Chưa cấu hình Firebase
   if (
     !projectId ||
     !clientEmail ||
@@ -79,12 +78,10 @@ export function getFirestore() {
 
 
 /* ======================================================
-   LOCAL DB
+   LOCAL JSON DATABASE
 ====================================================== */
 
 export async function ensureLocalDb() {
-
-  // Vercel không dùng db.json
   if (IS_VERCEL) {
     return;
   }
@@ -97,13 +94,10 @@ export async function ensureLocalDb() {
   );
 
   try {
-
     await fs.access(
       DB_FILE
     );
-
   } catch {
-
     await fs.writeFile(
       DB_FILE,
       JSON.stringify(
@@ -117,47 +111,36 @@ export async function ensureLocalDb() {
         2
       )
     );
-
   }
 }
 
 
 async function readLocalDb() {
-
   await ensureLocalDb();
 
   try {
-
     return JSON.parse(
       await fs.readFile(
         DB_FILE,
         'utf8'
       )
     );
-
   } catch {
-
     return {
       users: {},
       deposits: {},
       processedTransactions: {},
       transactions: {}
     };
-
   }
 }
 
 
-async function writeLocalDb(
-  db
-) {
-
+async function writeLocalDb(db) {
   if (IS_VERCEL) {
-
-    const error =
-      new Error(
-        'Local JSON storage is disabled on Vercel. Configure Firebase Firestore.'
-      );
+    const error = new Error(
+      'Local JSON storage is disabled on Vercel. Configure Firebase Firestore.'
+    );
 
     error.code =
       'FIREBASE_NOT_CONFIGURED';
@@ -177,16 +160,13 @@ async function writeLocalDb(
 
 
 function assertStorage() {
-
   if (
     IS_VERCEL &&
     !initFirestore()
   ) {
-
-    const error =
-      new Error(
-        'Firebase Firestore is not configured on Vercel.'
-      );
+    const error = new Error(
+      'Firebase Firestore is not configured on Vercel.'
+    );
 
     error.code =
       'FIREBASE_NOT_CONFIGURED';
@@ -204,17 +184,13 @@ export async function getDoc(
   collection,
   id
 ) {
-
   const db =
     initFirestore();
 
   if (db) {
-
     const snapshot =
       await db
-        .collection(
-          collection
-        )
+        .collection(collection)
         .doc(id)
         .get();
 
@@ -244,16 +220,12 @@ export async function setDoc(
   id,
   value
 ) {
-
   const db =
     initFirestore();
 
   if (db) {
-
     await db
-      .collection(
-        collection
-      )
+      .collection(collection)
       .doc(id)
       .set(
         value,
@@ -290,17 +262,13 @@ export async function setDoc(
 export async function findDepositByPaymentCode(
   paymentCode
 ) {
-
   const db =
     initFirestore();
 
   if (db) {
-
     const snapshot =
       await db
-        .collection(
-          'deposits'
-        )
+        .collection('deposits')
         .where(
           'paymentCode',
           '==',
@@ -314,11 +282,8 @@ export async function findDepositByPaymentCode(
     }
 
     return {
-      id:
-        snapshot.docs[0].id,
-
-      data:
-        snapshot.docs[0].data()
+      id: snapshot.docs[0].id,
+      data: snapshot.docs[0].data()
     };
   }
 
@@ -328,23 +293,22 @@ export async function findDepositByPaymentCode(
     await readLocalDb();
 
   for (
-    const [
-      id,
-      value
-    ]
+    const [id, value]
     of Object.entries(
       local.deposits || {}
     )
   ) {
+    const storedCode =
+      String(
+        value.paymentCode || ''
+      )
+        .trim()
+        .toUpperCase();
 
     if (
-      String(
-        value.paymentCode
-      ).trim().toUpperCase()
-      ===
+      storedCode ===
       paymentCode
     ) {
-
       return {
         id,
         data: value
@@ -357,6 +321,111 @@ export async function findDepositByPaymentCode(
 
 
 /* ======================================================
+   NORMALIZE PAYMENT CODE
+====================================================== */
+
+/*
+  Chấp nhận:
+
+  NAPABC123456
+  NAP_ABC123456
+  NAP-ABC123456
+
+  Chuẩn hóa về:
+
+  NAPABC123456
+*/
+
+function normalizePaymentCode(
+  value
+) {
+  if (!value) {
+    return '';
+  }
+
+  let code =
+    String(value)
+      .trim()
+      .toUpperCase();
+
+  code =
+    code.replace(
+      /^NAP[_-]?/,
+      'NAP'
+    );
+
+  const match =
+    code.match(
+      /^NAP[A-Z0-9]{6,}$/
+    );
+
+  return match
+    ? match[0]
+    : '';
+}
+
+
+/* ======================================================
+   EXTRACT PAYMENT CODE
+====================================================== */
+
+function extractPaymentCode(
+  payload
+) {
+  /*
+    1. Ưu tiên payload.code
+  */
+
+  const fromCode =
+    normalizePaymentCode(
+      payload?.code
+    );
+
+  if (fromCode) {
+    return fromCode;
+  }
+
+
+  /*
+    2. Đọc payload.content
+  */
+
+  const content =
+    String(
+      payload?.content || ''
+    )
+      .trim()
+      .toUpperCase();
+
+  if (!content) {
+    return '';
+  }
+
+
+  /*
+    Hỗ trợ:
+
+    NAPABC123456
+    NAP_ABC123456
+    NAP-ABC123456
+  */
+
+  const match =
+    content.match(
+      /NAP[_-]?[A-Z0-9]{6,}/i
+    );
+
+  if (!match) {
+    return '';
+  }
+
+  return normalizePaymentCode(
+    match[0]
+  );
+}
+
+
+/* ======================================================
    CREATE DEPOSIT + VIETQR
 ====================================================== */
 
@@ -364,17 +433,11 @@ export async function createDeposit(
   userId,
   amount
 ) {
-
   const db =
     initFirestore();
 
   const acc =
     process.env.BANK_ACCOUNT?.trim();
-
-  /*
-    MBBank:
-    BANK_CODE=MB
-  */
 
   const bank =
     process.env.BANK_CODE?.trim() ||
@@ -384,13 +447,10 @@ export async function createDeposit(
     process.env.BANK_NAME?.trim() ||
     'MBBank';
 
-
   if (!acc) {
-
-    const error =
-      new Error(
-        'BANK_ACCOUNT chưa được cấu hình.'
-      );
+    const error = new Error(
+      'BANK_ACCOUNT chưa được cấu hình.'
+    );
 
     error.code =
       'BANK_NOT_CONFIGURED';
@@ -399,9 +459,15 @@ export async function createDeposit(
   }
 
 
-  /* --------------------------------------------------
-     Tạo mã thanh toán duy nhất
-  -------------------------------------------------- */
+  /*
+    Mã nạp:
+
+    NAP + 10 ký tự HEX
+
+    Ví dụ:
+
+    NAPF41B097A3C
+  */
 
   const paymentCode =
     `NAP${
@@ -417,7 +483,6 @@ export async function createDeposit(
 
 
   const deposit = {
-
     id:
       depositId,
 
@@ -434,29 +499,19 @@ export async function createDeposit(
 
     createdAt:
       new Date().toISOString()
-
   };
 
 
-  /* --------------------------------------------------
-     Lưu deposit
-  -------------------------------------------------- */
+  /*
+    Lưu deposit
+  */
 
   if (db) {
-
     await db
-      .collection(
-        'deposits'
-      )
-      .doc(
-        depositId
-      )
-      .set(
-        deposit
-      );
-
+      .collection('deposits')
+      .doc(depositId)
+      .set(deposit);
   } else {
-
     assertStorage();
 
     const local =
@@ -466,8 +521,7 @@ export async function createDeposit(
 
     local.deposits[
       depositId
-    ] =
-      deposit;
+    ] = deposit;
 
     await writeLocalDb(
       local
@@ -475,42 +529,31 @@ export async function createDeposit(
   }
 
 
-  /* ==================================================
-     VIETQR TRỰC TIẾP
-     
-     QUAN TRỌNG:
-     KHÔNG dùng QRCode.toDataURL()
-     
-     qrUrl chính là URL ảnh QR.
-  ================================================== */
+  /*
+    VietQR trực tiếp.
+
+    Không dùng QRCode.toDataURL().
+  */
+
+  const qrParams =
+    new URLSearchParams({
+      acc,
+      bank,
+      amount:
+        String(amount),
+      des:
+        paymentCode
+    });
 
   const qrUrl =
-    'https://vietqr.app/img?' +
-    'acc=' +
-    encodeURIComponent(
-      acc
-    ) +
-    '&bank=' +
-    encodeURIComponent(
-      bank
-    ) +
-    '&amount=' +
-    encodeURIComponent(
-      amount
-    ) +
-    '&des=' +
-    encodeURIComponent(
-      paymentCode
-    );
+    `https://vietqr.app/img?${qrParams.toString()}`;
 
 
   return {
-
     ...deposit,
 
     qrUrl,
 
-    // Tương thích với frontend cũ
     qrDataUrl:
       qrUrl,
 
@@ -521,7 +564,6 @@ export async function createDeposit(
 
     bankAccount:
       acc
-
   };
 }
 
@@ -533,23 +575,22 @@ export async function createDeposit(
 export async function processSePayPayload(
   payload
 ) {
-
   const transferType =
     String(
       payload?.transferType || ''
     )
-      .toLowerCase()
-      .trim();
+      .trim()
+      .toLowerCase();
 
 
-  /* --------------------------------------------------
-     Chỉ xử lý tiền vào
-  -------------------------------------------------- */
+  /*
+    Chỉ xử lý tiền vào
+  */
 
   if (
-    transferType !== 'in'
+    transferType !==
+    'in'
   ) {
-
     return {
       success: true,
       ignored: true,
@@ -559,123 +600,94 @@ export async function processSePayPayload(
   }
 
 
-  /* --------------------------------------------------
-     Transaction ID
-  -------------------------------------------------- */
+  /*
+    Transaction ID
+  */
 
   const externalId =
     String(
       payload?.id ??
       payload?.referenceCode ??
       ''
-    ).trim();
+    )
+      .trim();
 
 
   if (!externalId) {
-
     return {
-
       success: false,
-
       status: 400,
-
       message:
         'Missing transaction id'
-
     };
   }
 
 
-  /* ==================================================
-     LẤY MÃ NẠP TIỀN
-     
-     Ưu tiên:
-     payload.code
-     
-     Sau đó:
-     payload.content
-  ================================================== */
+  /*
+    Lấy payment code
+  */
 
-  let paymentCode =
-    '';
-
-
-  const sepayCode =
-    String(
-      payload?.code || ''
-    )
-      .trim()
-      .toUpperCase();
-
-
-  if (
-    sepayCode.startsWith(
-      'NAP'
-    )
-  ) {
-
-    paymentCode =
-      sepayCode;
-
-  } else {
-
-    const content =
-      String(
-        payload?.content || ''
-      );
-
-
-    const match =
-      content.match(
-        /(NAP[A-Z0-9-]{6,})/i
-      );
-
-
-    if (match) {
-
-      paymentCode =
-        match[1]
-          .toUpperCase();
-
-    }
-
-  }
-
-
-  /* --------------------------------------------------
-     Không tìm được mã
-  -------------------------------------------------- */
-
-  if (!paymentCode) {
-
-    console.log(
-      'SePay ignored: payment code not found',
-      {
-        id:
-          externalId,
-
-        code:
-          payload?.code || null,
-
-        content:
-          payload?.content || '',
-
-        amount:
-          payload?.transferAmount || null
-      }
+  const paymentCode =
+    extractPaymentCode(
+      payload
     );
 
+
+  /*
+    DEBUG
+  */
+
+  console.log(
+    'SEPAY PAYMENT DATA',
+    {
+      externalId,
+
+      code:
+        payload?.code ??
+        null,
+
+      content:
+        payload?.content ??
+        null,
+
+      paymentCode,
+
+      amount:
+        payload?.transferAmount ??
+        null,
+
+      accountNumber:
+        payload?.accountNumber ??
+        null
+    }
+  );
+
+
+  /*
+    Không tìm thấy mã
+  */
+
+  if (!paymentCode) {
     return {
+      success: false,
 
-      success: true,
+      status: 422,
 
-      ignored: true,
+      message:
+        'Không tìm thấy mã thanh toán NAP',
 
       reason:
         'payment_code_not_found',
 
-      externalId
+      externalId,
 
+      receivedCode:
+        payload?.code ??
+        null,
+
+      receivedContent:
+        payload?.content ??
+        null
     };
   }
 
@@ -684,12 +696,11 @@ export async function processSePayPayload(
     initFirestore();
 
 
-  /* ==================================================
-     KIỂM TRA GIAO DỊCH ĐÃ XỬ LÝ
-  ================================================== */
+  /* ====================================================
+     CHỐNG XỬ LÝ TRÙNG
+  ==================================================== */
 
   if (db) {
-
     const processedRef =
       db
         .collection(
@@ -699,67 +710,95 @@ export async function processSePayPayload(
           externalId
         );
 
-
     const processedSnap =
       await processedRef.get();
-
 
     if (
       processedSnap.exists
     ) {
-
       return {
-
         success: true,
-
         duplicate: true,
-
         externalId
-
       };
     }
-
   } else {
-
     assertStorage();
 
     const local =
       await readLocalDb();
 
-
     if (
-      local.processedTransactions?.[
-        externalId
-      ]
+      local
+        .processedTransactions?.[
+          externalId
+        ]
     ) {
-
       return {
-
         success: true,
-
         duplicate: true,
-
         externalId
-
       };
     }
   }
 
 
-  /* ==================================================
-     TÌM DEPOSIT
-  ================================================== */
+  /* ====================================================
+     TÌM ĐƠN NẠP
+  ==================================================== */
 
-  const found =
+  let found =
     await findDepositByPaymentCode(
       paymentCode
     );
 
 
-  if (!found) {
+  /*
+    Nếu database đang lưu mã có "_"
+    thì thử thêm biến thể.
+  */
 
-    console.log(
-      'SePay ignored: deposit not found',
+  if (!found) {
+    const variants = [
+      paymentCode,
+
+      paymentCode.replace(
+        /^NAP/,
+        'NAP_'
+      ),
+
+      paymentCode.replace(
+        /^NAP/,
+        'NAP-'
+      )
+    ];
+
+
+    for (
+      const variant of variants
+    ) {
+      if (
+        variant ===
+        paymentCode
+      ) {
+        continue;
+      }
+
+      found =
+        await findDepositByPaymentCode(
+          variant
+        );
+
+      if (found) {
+        break;
+      }
+    }
+  }
+
+
+  if (!found) {
+    console.error(
+      'SEPAY DEPOSIT NOT FOUND',
       {
         externalId,
         paymentCode
@@ -767,10 +806,11 @@ export async function processSePayPayload(
     );
 
     return {
+      success: false,
+      status: 422,
 
-      success: true,
-
-      ignored: true,
+      message:
+        'Không tìm thấy đơn nạp tương ứng',
 
       reason:
         'deposit_not_found',
@@ -778,7 +818,6 @@ export async function processSePayPayload(
       paymentCode,
 
       externalId
-
     };
   }
 
@@ -790,41 +829,33 @@ export async function processSePayPayload(
     found;
 
 
-  /* ==================================================
-     ĐƠN ĐÃ THANH TOÁN
-  ================================================== */
+  /*
+    Đã thanh toán
+  */
 
   if (
     deposit.status ===
     'paid'
   ) {
-
     return {
-
       success: true,
-
       duplicate: true,
-
       depositId,
-
       paymentCode,
-
       externalId
-
     };
   }
 
 
-  /* ==================================================
+  /* ====================================================
      KIỂM TRA SỐ TIỀN
-  ================================================== */
+  ==================================================== */
 
-  const amount =
+  const receivedAmount =
     Number(
       payload?.transferAmount ||
       0
     );
-
 
   const expectedAmount =
     Number(
@@ -833,19 +864,18 @@ export async function processSePayPayload(
 
 
   if (
-    amount !==
+    receivedAmount !==
     expectedAmount
   ) {
-
-    console.log(
-      'SePay amount mismatch',
+    console.error(
+      'SEPAY AMOUNT MISMATCH',
       {
         externalId,
 
         paymentCode,
 
         received:
-          amount,
+          receivedAmount,
 
         expected:
           expectedAmount
@@ -853,7 +883,6 @@ export async function processSePayPayload(
     );
 
     return {
-
       success: false,
 
       status: 422,
@@ -861,29 +890,31 @@ export async function processSePayPayload(
       message:
         'Amount mismatch',
 
-      receivedAmount:
-        amount,
+      receivedAmount,
 
-      expectedAmount:
-        expectedAmount
+      expectedAmount,
 
+      paymentCode,
+
+      externalId
     };
   }
 
 
-  /* ==================================================
-     KIỂM TRA TÀI KHOẢN NHẬN
-  ================================================== */
+  /* ====================================================
+     KIỂM TRA TÀI KHOẢN
+  ==================================================== */
 
   const expectedAccount =
     String(
-      process.env.BANK_ACCOUNT || ''
+      process.env.BANK_ACCOUNT ||
+      ''
     ).trim();
-
 
   const receivedAccount =
     String(
-      payload?.accountNumber || ''
+      payload?.accountNumber ||
+      ''
     ).trim();
 
 
@@ -893,9 +924,8 @@ export async function processSePayPayload(
     expectedAccount !==
       receivedAccount
   ) {
-
-    console.log(
-      'SePay account mismatch',
+    console.error(
+      'SEPAY ACCOUNT MISMATCH',
       {
         externalId,
 
@@ -906,14 +936,18 @@ export async function processSePayPayload(
     );
 
     return {
-
       success: false,
 
       status: 422,
 
       message:
-        'Bank account mismatch'
+        'Bank account mismatch',
 
+      expectedAccount,
+
+      receivedAccount,
+
+      paymentCode
     };
   }
 
@@ -922,35 +956,24 @@ export async function processSePayPayload(
     new Date().toISOString();
 
 
-  /* ==================================================
+  /* ====================================================
      FIRESTORE
-     
-     Dùng transaction để chống cộng tiền 2 lần.
-  ================================================== */
+  ==================================================== */
 
   if (db) {
-
     const depositRef =
       db
-        .collection(
-          'deposits'
-        )
-        .doc(
-          depositId
-        );
-
+        .collection('deposits')
+        .doc(depositId);
 
     const userRef =
       db
-        .collection(
-          'users'
-        )
+        .collection('users')
         .doc(
           String(
             deposit.userId
           )
         );
-
 
     const processedRef =
       db
@@ -961,12 +984,9 @@ export async function processSePayPayload(
           externalId
         );
 
-
     const transactionRef =
       db
-        .collection(
-          'transactions'
-        )
+        .collection('transactions')
         .doc(
           externalId
         );
@@ -975,37 +995,31 @@ export async function processSePayPayload(
     await db.runTransaction(
       async (transaction) => {
 
-        /* ---------------------------------------------
-           Kiểm tra giao dịch trùng lần nữa
-        --------------------------------------------- */
-
         const processedSnap =
           await transaction.get(
             processedRef
           );
 
-
         if (
           processedSnap.exists
         ) {
-
           return;
         }
 
-
-        /* ---------------------------------------------
-           Đọc deposit
-        --------------------------------------------- */
 
         const depositSnap =
           await transaction.get(
             depositRef
           );
 
+        if (
+          !depositSnap.exists
+        ) {
+          throw new Error(
+            'Deposit not found'
+          );
+        }
 
-        /* ---------------------------------------------
-           Đọc user
-        --------------------------------------------- */
 
         const userSnap =
           await transaction.get(
@@ -1013,59 +1027,27 @@ export async function processSePayPayload(
           );
 
 
-        if (
-          !depositSnap.exists
-        ) {
-
-          throw new Error(
-            'Deposit not found'
-          );
-        }
-
-
         const currentDeposit =
           depositSnap.data();
 
-
-        /* ---------------------------------------------
-           Đã thanh toán
-        --------------------------------------------- */
 
         if (
           currentDeposit.status ===
           'paid'
         ) {
 
-          transaction.create(
-            processedRef,
-            {
-
-              transactionId:
-                externalId,
-
-              depositId,
-
-              processedAt:
-                now
-
-            }
-          );
+          /*
+            Đã paid thì không cộng lần nữa.
+          */
 
           return;
         }
 
 
-        /* ---------------------------------------------
-           User hiện tại
-        --------------------------------------------- */
-
         const currentUser =
           userSnap.exists
-
             ? userSnap.data()
-
             : {
-
                 userId:
                   String(
                     deposit.userId
@@ -1076,7 +1058,6 @@ export async function processSePayPayload(
 
                 balance:
                   0
-
               };
 
 
@@ -1089,19 +1070,16 @@ export async function processSePayPayload(
 
         const newBalance =
           oldBalance +
-          amount;
+          receivedAmount;
 
 
-        /* ---------------------------------------------
-           CỘNG TIỀN
-        --------------------------------------------- */
+        /*
+          CỘNG TIỀN
+        */
 
         transaction.set(
-
           userRef,
-
           {
-
             ...currentUser,
 
             userId:
@@ -1114,29 +1092,20 @@ export async function processSePayPayload(
 
             updatedAt:
               now
-
           },
-
           {
-
-            merge:
-              true
-
+            merge: true
           }
-
         );
 
 
-        /* ---------------------------------------------
-           Đánh dấu deposit PAID
-        --------------------------------------------- */
+        /*
+          PAID
+        */
 
         transaction.set(
-
           depositRef,
-
           {
-
             ...currentDeposit,
 
             status:
@@ -1159,29 +1128,20 @@ export async function processSePayPayload(
             bankAccount:
               payload?.accountNumber ||
               null
-
           },
-
           {
-
-            merge:
-              true
-
+            merge: true
           }
-
         );
 
 
-        /* ---------------------------------------------
-           Đánh dấu transaction đã xử lý
-        --------------------------------------------- */
+        /*
+          Đánh dấu processed
+        */
 
         transaction.create(
-
           processedRef,
-
           {
-
             transactionId:
               externalId,
 
@@ -1189,22 +1149,17 @@ export async function processSePayPayload(
 
             processedAt:
               now
-
           }
-
         );
 
 
-        /* ---------------------------------------------
-           Lưu lịch sử
-        --------------------------------------------- */
+        /*
+          Lưu lịch sử giao dịch
+        */
 
         transaction.set(
-
           transactionRef,
-
           {
-
             userId:
               String(
                 deposit.userId
@@ -1214,7 +1169,7 @@ export async function processSePayPayload(
               'deposit',
 
             amount:
-              amount,
+              receivedAmount,
 
             balanceBefore:
               oldBalance,
@@ -1241,30 +1196,21 @@ export async function processSePayPayload(
 
             createdAt:
               now
-
           },
-
           {
-
-            merge:
-              true
-
+            merge: true
           }
-
         );
-
       }
     );
-
-
   }
 
-  /* ==================================================
+
+  /* ====================================================
      LOCAL JSON
-  ================================================== */
+  ==================================================== */
 
   else {
-
     assertStorage();
 
     const local =
@@ -1272,32 +1218,24 @@ export async function processSePayPayload(
 
 
     local.users ??= {};
-
     local.deposits ??= {};
-
     local.processedTransactions ??= {};
-
     local.transactions ??= {};
 
 
-    /* -----------------------------------------------
-       Chống duplicate
-    ----------------------------------------------- */
+    /*
+      Duplicate
+    */
 
     if (
       local.processedTransactions[
         externalId
       ]
     ) {
-
       return {
-
         success: true,
-
         duplicate: true,
-
         externalId
-
       };
     }
 
@@ -1308,19 +1246,16 @@ export async function processSePayPayload(
       ];
 
 
-    if (
-      !currentDeposit
-    ) {
-
+    if (!currentDeposit) {
       return {
+        success: false,
+        status: 422,
 
-        success: true,
-
-        ignored: true,
+        message:
+          'Không tìm thấy đơn nạp',
 
         reason:
           'deposit_not_found'
-
       };
     }
 
@@ -1329,13 +1264,9 @@ export async function processSePayPayload(
       currentDeposit.status ===
       'paid'
     ) {
-
       return {
-
         success: true,
-
         duplicate: true
-
       };
     }
 
@@ -1343,10 +1274,7 @@ export async function processSePayPayload(
     const user =
       local.users[
         deposit.userId
-      ] ||
-
-      {
-
+      ] || {
         userId:
           deposit.userId,
 
@@ -1355,7 +1283,6 @@ export async function processSePayPayload(
 
         balance:
           0
-
       };
 
 
@@ -1368,17 +1295,16 @@ export async function processSePayPayload(
 
     const newBalance =
       oldBalance +
-      amount;
+      receivedAmount;
 
 
-    /* -----------------------------------------------
-       CỘNG TIỀN
-    ----------------------------------------------- */
+    /*
+      CỘNG TIỀN
+    */
 
     local.users[
       deposit.userId
     ] = {
-
       ...user,
 
       balance:
@@ -1386,18 +1312,16 @@ export async function processSePayPayload(
 
       updatedAt:
         now
-
     };
 
 
-    /* -----------------------------------------------
-       PAID
-    ----------------------------------------------- */
+    /*
+      PAID
+    */
 
     local.deposits[
       depositId
     ] = {
-
       ...currentDeposit,
 
       status:
@@ -1411,19 +1335,25 @@ export async function processSePayPayload(
 
       referenceCode:
         payload?.referenceCode ||
-        null
+        null,
 
+      gateway:
+        payload?.gateway ||
+        null,
+
+      bankAccount:
+        payload?.accountNumber ||
+        null
     };
 
 
-    /* -----------------------------------------------
-       Processed
-    ----------------------------------------------- */
+    /*
+      PROCESSED
+    */
 
     local.processedTransactions[
       externalId
     ] = {
-
       transactionId:
         externalId,
 
@@ -1431,18 +1361,16 @@ export async function processSePayPayload(
 
       processedAt:
         now
-
     };
 
 
-    /* -----------------------------------------------
-       Transaction history
-    ----------------------------------------------- */
+    /*
+      TRANSACTION
+    */
 
     local.transactions[
       externalId
     ] = {
-
       userId:
         deposit.userId,
 
@@ -1450,7 +1378,7 @@ export async function processSePayPayload(
         'deposit',
 
       amount:
-        amount,
+        receivedAmount,
 
       balanceBefore:
         oldBalance,
@@ -1477,7 +1405,6 @@ export async function processSePayPayload(
 
       createdAt:
         now
-
     };
 
 
@@ -1487,14 +1414,13 @@ export async function processSePayPayload(
   }
 
 
-  /* ==================================================
+  /* ====================================================
      SUCCESS
-  ================================================== */
+  ==================================================== */
 
   console.log(
-    'SePay credited successfully',
+    'SEPAY CREDITED SUCCESSFULLY',
     {
-
       externalId,
 
       paymentCode,
@@ -1504,19 +1430,17 @@ export async function processSePayPayload(
       userId:
         deposit.userId,
 
-      amount
-
+      amount:
+        receivedAmount
     }
   );
 
 
   return {
-
-    success:
-      true,
+    success: true,
 
     credited:
-      amount,
+      receivedAmount,
 
     paymentCode,
 
@@ -1524,7 +1448,6 @@ export async function processSePayPayload(
 
     transactionId:
       externalId
-
   };
 }
 
@@ -1537,74 +1460,54 @@ export function verifySePaySignature(
   rawBody,
   headers
 ) {
-
   const secret =
     process.env.SEPAY_WEBHOOK_SECRET?.trim();
 
 
   /*
-    Chưa có secret:
-    cho phép local development.
+    Không có secret:
+    cho phép development.
   */
 
   if (!secret) {
-
     return {
-
-      ok:
-        true,
-
-      skipped:
-        true
-
+      ok: true,
+      skipped: true
     };
   }
 
 
   const sig =
     String(
-
       headers?.['x-sepay-signature'] ||
-
       headers?.['X-SePay-Signature'] ||
-
       ''
-
-    );
+    ).trim();
 
 
   const ts =
     String(
-
       headers?.['x-sepay-timestamp'] ||
-
       headers?.['X-SePay-Timestamp'] ||
-
       ''
-
-    );
+    ).trim();
 
 
   if (
     !sig ||
     !ts
   ) {
-
     return {
-
-      ok:
-        false,
+      ok: false,
 
       message:
         'Missing webhook signature headers'
-
     };
   }
 
 
   const expected =
     'sha256=' +
-
     crypto
       .createHmac(
         'sha256',
@@ -1621,47 +1524,33 @@ export function verifySePaySignature(
       sig
     );
 
-
   const expectedBuffer =
     Buffer.from(
       expected
     );
 
 
-  /*
-    timingSafeEqual yêu cầu
-    hai Buffer có cùng độ dài.
-  */
-
   if (
     receivedBuffer.length !==
     expectedBuffer.length
   ) {
-
     return {
-
-      ok:
-        false,
+      ok: false,
 
       message:
         'Invalid signature'
-
     };
   }
 
 
   const valid =
     crypto.timingSafeEqual(
-
       receivedBuffer,
-
       expectedBuffer
-
     );
 
 
   return {
-
     ok:
       valid,
 
@@ -1669,7 +1558,6 @@ export function verifySePaySignature(
       valid
         ? undefined
         : 'Invalid signature'
-
   };
 }
 
@@ -1679,30 +1567,19 @@ export function verifySePaySignature(
 ====================================================== */
 
 export function health() {
-
   const db =
     initFirestore();
 
-
   return {
-
-    ok:
-      true,
+    ok: true,
 
     storage:
-
       db
-
         ? 'firestore'
-
         : (
-
             IS_VERCEL
-
               ? 'not-configured'
-
               : 'local-json'
-
           ),
 
     sepaySecretConfigured:
@@ -1712,6 +1589,5 @@ export function health() {
 
     vercel:
       IS_VERCEL
-
   };
 }
