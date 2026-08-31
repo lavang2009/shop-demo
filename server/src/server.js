@@ -8,10 +8,12 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '../..');
 
+// Chỉ khởi tạo db.json khi chạy local; trên Vercel dữ liệu dùng Firestore.
 await ensureLocalDb();
 const app = express();
 app.use(express.static(path.join(ROOT, 'public')));
 
+// SePay: giữ raw body để HMAC xác thực chính xác.
 app.post('/webhook/sepay', express.raw({ type: 'application/json' }), async (req, res) => {
   try {
     const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body || '');
