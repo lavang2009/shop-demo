@@ -13,7 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '../..');
 const DATA_DIR = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
-await fs.mkdir(DATA_DIR, { recursive: true });
+if (process.env.VERCEL !== '1') await fs.mkdir(DATA_DIR, { recursive: true });
 
 let firestore = null;
 if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
@@ -44,7 +44,7 @@ async function get(collection, id) {
 const app = express();
 app.use(express.static(path.join(ROOT, 'public')));
 // Keep raw body for HMAC verification on the SePay webhook.
-app.post(['/webhook/sepay', '/api/webhook/sepay'], express.raw({ type: 'application/json' }), async (req, res) => {
+app.post('/webhook/sepay', express.raw({ type: 'application/json' }), async (req, res) => {
   try {
     const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
     const secret = process.env.SEPAY_WEBHOOK_SECRET;
@@ -52,7 +52,11 @@ app.post(['/webhook/sepay', '/api/webhook/sepay'], express.raw({ type: 'applicat
       const sig = req.get('X-SePay-Signature') || '';
       const ts = req.get('X-SePay-Timestamp') || '';
       const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(`${ts}.${rawBody.toString('utf8')}`).digest('hex');
-      if (!sig || !ts || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return res.status(401).json({ success: false, message: 'Invalid signature' });
+      const sigBuf = Buffer.from(sig);
+      const expectedBuf = Buffer.from(expected);
+      if (!sig || !ts || sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+        return res.status(401).json({ success: false, message: 'Invalid signature' });
+      }
     }
     const payload = JSON.parse(rawBody.toString('utf8'));
     if (payload.transferType !== 'in') return res.json({ success: true, ignored: true });
@@ -163,8 +167,4 @@ app.post('/api/test/sepay', async (req, res) => {
 app.get('/api/health', (req, res) => res.json({ ok: true, storage: firestore ? 'firestore' : 'local-json', sepaySecretConfigured: Boolean(process.env.SEPAY_WEBHOOK_SECRET) }));
 app.use((req, res) => res.sendFile(path.join(ROOT, 'public', 'index.html')));
 const port = Number(process.env.PORT || 3000);
-export { app };
-
-if (process.env.VERCEL !== '1') {
-  app.listen(port, () => console.log(`Server running at http://localhost:${port}`));
-}
+app.listen(port, () => console.log(`Server running at http://localhost:${port}`));
