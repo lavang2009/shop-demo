@@ -1,6 +1,6 @@
 {
-  "name": "sepay-auto-topup-demo",
-  "version": "1.0.1",
+  "name": "sepay-auto-topup-vercel",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {

@@ -1,17 +1,27 @@
-# SePay Auto Topup - Vercel corrected build
-
-This build keeps the Express app for local development and exposes it as a Vercel Node Function through `api/[...path].js`.
+# SePay Auto Topup - Vercel + Express + Firebase
 
 ## Local
 npm install
+copy .env.example .env
 npm start
 
 Open http://localhost:3000
 
-## Vercel
-Deploy the project root (the folder containing `api`, `server`, `public`, `package.json`, `vercel.json`).
+Local mode uses data/db.json when Firebase variables are empty.
 
-Webhook URL:
+## Vercel
+Vercel exposes real Functions:
+- /api/health
+- /api/demo/login
+- /api/balance/:userId
+- /api/deposits
+- /api/deposits/:id
+- /api/webhook/sepay
+- /api/test/sepay
+
+On Vercel, configure Firebase Firestore in Environment Variables. Local JSON is intentionally disabled on Vercel.
+
+SePay webhook URL:
 https://YOUR-DOMAIN.vercel.app/api/webhook/sepay
 
-For real money, configure Firebase Firestore service-account environment variables on Vercel. Do not rely on local JSON persistence in Vercel.
+Use HTTPS, JSON, transaction type = Money In. HMAC-SHA256 is supported via SEPAY_WEBHOOK_SECRET.
