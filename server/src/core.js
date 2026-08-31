@@ -610,7 +610,7 @@ export async function processSePayPayload(
 
   if (
     sepayCode.startsWith(
-      'NAP_'
+      'NAP'
     )
   ) {
 
